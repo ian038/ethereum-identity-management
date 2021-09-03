@@ -54,7 +54,6 @@ function App() {
   const readProfile = async () => {
     try {
       const { record } = await getProfile()
-      console.log({ record })
       if (record) {
         setProfile(record)
       }
