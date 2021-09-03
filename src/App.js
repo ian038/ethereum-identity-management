@@ -1,83 +1,124 @@
-import { useState } from 'react'
-import CeramicClient from '@ceramicnetwork/http-client'
-import ThreeIdResolver from '@ceramicnetwork/3id-did-resolver'
-import { EthereumAuthProvider, ThreeIdConnect } from '@3id/connect';
-import { DID } from 'dids';
-import { IDX } from '@ceramicstudio/idx';
+import { useState, useRef } from 'react'
+import { client, getProfile } from './utils/identity';
 import './App.css';
 
-const endpoint = "https://ceramic-clay.3boxlabs.com"
-
 function App() {
+  const [bio, setBio] = useState('')
+  const [linkedIn, setLinkedIn] = useState('')
   const [username, setUsername] = useState('')
-  const [image, setImage] = useState('')
+  const [profile, setProfile] = useState({})
+  const [showGreeting, setShowGreeting] = useState(false)
   const [loaded, setLoaded] = useState(false)
+  const [idxInstance, setIdxInstance] = useState(null)
+  const [localDid, setLocalDid] = useState(null)
+  const idxRef = useRef(null)
+  const didRef = useRef(null)
+  idxRef.current = idxInstance
+  didRef.current = localDid
 
-  const connect = async () => {
-    // fetch user profile using ethereum wallet request
-    const addresses = await window.ethereum.request({
-      method: 'eth_requestAccounts'
-    })
-    return addresses
-  }
-
-  const readProfile = async () => {
-    const [address] = await connect()
-    const ceramic = new CeramicClient(endpoint)
-    const idx = new IDX({ ceramic })
-
-    try {
-      const data = await idx.get(
-        'basicProfile',
-        `${address}@eip155:1` 
-      )
-      console.log('Data: ', data)
-      if(data.name) setUsername(data.name)
-      if(data.avatar) setImage(data.avatar)
-    } catch(error) {
+  const signIn = async () => {
+    const cdata = await client()
+    const { did, idx, error } = cdata
+    if (error) {
       console.log('error: ', error)
-      setLoaded(true)
+      return
     }
+    setLocalDid(did)
+    setIdxInstance(idx)
+    const data = await idx.get('basicProfile', did.id)
+    if (data) {
+      setProfile(data)
+    } else {
+      setShowGreeting(true)
+    }
+    setLoaded(true)
   }
 
   const updateProfile = async () => {
-    const [address] = await connect()
-    const ceramic = new CeramicClient(endpoint)
-    const threeIdConnect = new ThreeIdConnect()
-    const provider = new EthereumAuthProvider(window.ethereum, address)
-
-    await threeIdConnect.connect(provider)
-
-    // interact with decentralized identifier
-    // if they already have a did, reference that
-    // else, we give them a new one
-    const did = new DID({
-      provider: threeIdConnect.getDidProvider(),
-      resolver: {
-        ...ThreeIdResolver.getResolver(ceramic)
-      }
-    })
-    ceramic.setDID(did)
-    await ceramic.did.authenticate()
-
-    const idx = new IDX({ ceramic })
-    idx.set('basicProfile', {
-      name: username, 
-      avatar: image
-    })
+    if (!username && !bio && !linkedIn) {
+      alert('All fields are required')
+      return
+    }
+    if (!idxInstance) {
+      await signIn()
+    }
+    const user = { ...profile }
+    if (username) user.name = username
+    if (bio) user.bio = bio
+    if (linkedIn) user.linkedIn = linkedIn
+    await idxRef.current.set('basicProfile', user)
+    setLocalProfileData()
     alert('Profile updated!')
   }
 
-  return (
-    <div className="App">
-      <input placeholder="Username" onChange={e => setUsername(e.target.value)} />
-      <input placeholder="Profile Image" onChange={e => setImage(e.target.value)} />
-      <button onClick={updateProfile}>Set Profile</button>
-      <button onClick={readProfile}>Read Profile</button>
+  const readProfile = async () => {
+    try {
+      const { record } = await getProfile()
+      console.log({ record })
+      if (record) {
+        setProfile(record)
+      }
+    } catch (error) {
+      setShowGreeting(true)
+    }
+    setLoaded(true)
+  }
 
-      { username && <h3>{username}</h3> }
-      { image && <img style={{ width: '400px' }} src={image} alt="User Avatar" /> }
-      {!image && !username && !loaded &&<h4>No profile, plase create one.</h4>}
+  const setLocalProfileData = async () => {
+    try {
+      const data = await idxRef.current.get('basicProfile', didRef.current.id)
+      if (!data) return
+      setProfile(data)
+      setShowGreeting(false)
+    } catch (error) {
+      console.log('error', error)
+    }
+  }
+
+  return (
+    <div style={{ paddingTop: 50, width: 500, margin: '0 auto', display: 'flex', flex: 1 }}>
+      <div className="flex flex-1 flex-col justify-center">
+        <h1 className="text-5xl text-center">
+          Ethereum Identity Management
+        </h1>
+        <p className="text-xl text-center mt-2 text-gray-400">An authentication flow example using blockchain technology</p>
+        {
+          Object.keys(profile).length ? (
+            <div className="mb-4">
+              <h2 className="text-2xl font-semibold mt-6">{profile.name}</h2>
+              <p className="text-gray-500 text-sm my-1">{profile.bio}</p>
+              <p className="text-lg	text-gray-900">Here is my LinkedIn: {profile.linkedIn}. Let's connect.</p>
+            </div>
+          ) : null
+        }
+        {
+          !loaded && (
+            <>
+            <button
+            onClick={signIn}
+            className="pt-4 shadow-md bg-green-300 mt-4 mb-2 text-white font-bold py-2 px-4 rounded"
+            >Sign In</button>
+            <button className="pt-4 shadow-md bg-blue-500 mb-2 text-white font-bold py-2 px-4 rounded" onClick={readProfile}>Read Profile</button>
+            </>
+          )
+        }      
+        {
+          loaded && showGreeting && (
+            <p className="my-4 font-bold text-center">You have no profile yet, please create one.</p>
+          )
+        }
+        {
+          loaded && (
+            <>
+              <input className="pt-4 rounded bg-gray-100 px-3 py-2" placeholder="Username" onChange={e => setUsername(e.target.value)} />
+              <input className="pt-4 rounded bg-gray-100 px-3 py-2" placeholder="Bio" onChange={e => setBio(e.target.value)} />
+              <input className="pt-4 rounded bg-gray-100 px-3 py-2" placeholder="LinkedIn" onChange={e => setLinkedIn(e.target.value)} />
+              <button className="pt-4 shadow-md bg-green-500 mt-2 mb-2 text-white font-bold py-2 px-4 rounded" onClick={updateProfile}>Update Profile</button>
+              <button className="pt-4 shadow-md bg-blue-500 mb-2 text-white font-bold py-2 px-4 rounded" onClick={readProfile}>Read Profile</button>
+            </>
+          )
+        }     
+      </div>
     </div>
   );
 }
